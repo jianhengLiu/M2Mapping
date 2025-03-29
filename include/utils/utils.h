@@ -70,8 +70,9 @@ void pointcloud_to_raydepth(PointCloudT &_pointcloud, int _ds_pt_num,
                             torch::Device device = torch::kCPU);
 
 template <typename RaySamplesT>
-RaySamplesT sample_batch_pts(const RaySamplesT &_samples, int sdf_batch_ray_num = -1,
-                             int batch_type = 1, int iter = 0);
+RaySamplesT sample_batch_pts(const RaySamplesT &_samples,
+                             int sdf_batch_ray_num = -1, int batch_type = 1,
+                             int iter = 0);
 
 void sample_surface_pts(const DepthSamples &_samples,
                         DepthSamples &surface_samples,
@@ -108,6 +109,8 @@ torch::Tensor positional_encode(const torch::Tensor &xyz);
 torch::Tensor meshgrid_3d(float x_min, float x_max, float y_min, float y_max,
                           float z_min, float z_max, float resolution,
                           torch::Device &device);
+
+DepthSamples sample_free_pts(const DepthSamples &_samples, int sample_num);
 
 #ifdef ENABLE_ROS
 sensor_msgs::PointCloud2 tensor_to_pointcloud_msg(const torch::Tensor &_xyz,

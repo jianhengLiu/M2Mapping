@@ -10,8 +10,8 @@
 [submodule "submodules/nerfacc_cpp"]
 	path = submodules/nerfacc_cpp
 	url = https://github.com/jianhengLiu/nerfacc_cpp.git
-[submodule "submodules/ply_utils"]
-	path = submodules/ply_utils
+[submodule "include/utils/ply_utils"]
+	path = include/utils/ply_utils
 	url = https://github.com/jianhengLiu/ply_utils.git
 [submodule "submodules/ROG-Map"]
 	path = submodules/ROG-Map

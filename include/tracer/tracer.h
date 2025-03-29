@@ -6,7 +6,7 @@ namespace tracer {
 std::vector<torch::Tensor>
 render_ray(const LocalMap::Ptr &_local_map_ptr, const torch::Tensor &ray_o,
            const torch::Tensor &ray_d, const int &render_type = 0,
-           const int &iter_num = 1, const bool training = true);
+           const int &iter_num = 1, const bool blending = true);
 
 std::vector<torch::Tensor>
 render_from_pts(const LocalMap::Ptr &_local_map_ptr, torch::Tensor pts,
@@ -23,6 +23,11 @@ void plot_ray_analysis(const LocalMap::Ptr &_local_map_ptr, torch::Tensor pts,
 std::vector<torch::Tensor> sphere_trace_adaptive_sampling(
     const LocalMap::Ptr &_local_map_ptr, torch::Tensor ray_o,
     torch::Tensor ray_d, const torch::Tensor &depth_io, torch::Tensor ridx,
-    const int &iter_num = 100, const float &surface_thr = 0.001,
-    bool training = true);
+    const int &iter_num = 100, const float &surface_thr = 0.001);
+
+std::vector<torch::Tensor>
+sphere_trace_adaptive(const LocalMap::Ptr &_local_map_ptr, torch::Tensor ray_o,
+                      torch::Tensor ray_d, const torch::Tensor &depth_io,
+                      torch::Tensor ridx, const int &iter_num = 100,
+                      const float &surface_thr = 0.001);
 } // namespace tracer

@@ -660,6 +660,35 @@ torch::Tensor meshgrid_3d(float x_min, float x_max, float y_min, float y_max,
                     -1);
 }
 
+DepthSamples sample_free_pts(const DepthSamples &_samples, int sample_num) {
+  // # Sample points along 1D line
+  // # depth ~ (NUM_RAYS, NUM_SAMPLES)
+  // [N, K]
+  torch::Tensor steps = torch::arange(sample_num, _samples.device())
+                            .unsqueeze(0)
+                            .to(torch::kFloat32)
+                            .repeat({_samples.size(0), 1});
+  steps += torch::rand_like(steps);
+  static float inv_sample_num = 1.0f / sample_num;
+  steps *= inv_sample_num;
+
+  // //  non-linearly map depth to distribute more points near 1.0
+  // static float beta = 0.5f; // beta < 1 shifts samples towards 1
+  // steps = torch::pow(steps, beta);
+
+  // [N * K]
+  DepthSamples free_samples = _samples.index_select(
+      0, _samples.ridx.unsqueeze(1).repeat({1, sample_num}).view({-1}));
+
+  // [N * K, 1]
+  auto depth_free_samples = free_samples.depth * steps.view({-1, 1});
+  free_samples.ray_sdf = free_samples.depth - depth_free_samples;
+  free_samples.depth = depth_free_samples;
+  free_samples.xyz =
+      free_samples.origin + free_samples.direction * free_samples.depth;
+  return free_samples;
+}
+
 #ifdef ENABLE_ROS
 sensor_msgs::PointCloud2 tensor_to_pointcloud_msg(const torch::Tensor &_xyz,
                                                   const torch::Tensor &_rgb) {

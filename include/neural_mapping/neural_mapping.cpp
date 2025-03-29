@@ -328,7 +328,7 @@ void NeuralSLAM::train_callback(const int &_iter,
   torch::NoGradGuard no_grad;
   if (_iter == -1) {
     k_t = 1.0f;
-    k_sample_std = 1e-2f;
+    k_sample_std = 1e-3f;
 
     int dir_feat_dim = k_dir_embedding_degree * k_dir_embedding_degree;
     local_map_ptr->dir_mask =
@@ -352,7 +352,7 @@ void NeuralSLAM::train_callback(const int &_iter,
   if (_point_samples.pred_isigma.numel() > 0) {
     k_sample_std = (1.0 / _point_samples.pred_isigma).mean().item<float>();
     llog::RecordValue("sstd", k_sample_std);
-    k_sample_std = max(k_sample_std, 1e-2f);
+    k_sample_std = max(k_sample_std, 1e-3f);
   }
 
   if (k_outlier_remove && (_iter > 0)) {
@@ -718,10 +718,7 @@ bool NeuralSLAM::build_occ_map() {
 #endif
 
     // Combine ROG-Map occupied points with depth points
-    occupancy_points = torch::cat(
-        {occupancy_points,
-         data_loader_ptr->dataparser_ptr_->train_depth_pack_.xyz.view({-1, 3})},
-        0);
+    occupancy_points = torch::cat({occupancy_points, inrange_pt}, 0);
 
     // Update octree with combined points
     local_map_ptr->update_octree_as(occupancy_points.cuda());
@@ -816,9 +813,7 @@ bool NeuralSLAM::build_occ_map() {
     local_map_ptr->update_octree_as(occupancy_points.cuda());
   } else {
     // If probability map is disabled, just use depth points directly
-    local_map_ptr->update_octree_as(
-        data_loader_ptr->dataparser_ptr_->train_depth_pack_.xyz.view({-1, 3})
-            .cuda());
+    local_map_ptr->update_octree_as(inrange_pt.cuda());
   }
 
   //----------------------------------------------------------------------
@@ -922,7 +917,7 @@ std::vector<torch::Tensor> NeuralSLAM::render_image(const torch::Tensor &_pose,
   p_t_trace->tic();
 
   int ray_num = ray_samples.origin.size(0);
-  std::vector<torch::Tensor> render_colors_vec, render_depths_vec,
+  std::vector<torch::Tensor> render_colors_vec, render_dists_vec,
       render_accs_vec, render_scale_vec, render_num_vec, sdf_vec, alphas_vec;
   float batch_size = k_batch_ray_num;
   float sample_pts_per_ray = k_vis_batch_pt_num / batch_size;
@@ -934,11 +929,11 @@ std::vector<torch::Tensor> NeuralSLAM::render_image(const torch::Tensor &_pose,
     p_t_render_ray->tic();
     auto trace_results =
         tracer::render_ray(local_map_ptr, batch_ray_samples.origin,
-                           batch_ray_samples.direction, 0, k_trace_iter);
+                           batch_ray_samples.direction, 0, k_trace_iter, false);
     p_t_render_ray->toc_sum();
     if (!trace_results.empty()) {
       render_colors_vec.emplace_back(trace_results[0].to(_pose.device()));
-      render_depths_vec.emplace_back(trace_results[1].to(_pose.device()));
+      render_dists_vec.emplace_back(trace_results[1].to(_pose.device()));
       render_accs_vec.emplace_back(trace_results[2].to(_pose.device()));
       render_scale_vec.emplace_back(trace_results[9].to(_pose.device()));
       render_num_vec.emplace_back(trace_results[10].to(_pose.device()));
@@ -953,7 +948,7 @@ std::vector<torch::Tensor> NeuralSLAM::render_image(const torch::Tensor &_pose,
     batch_size = k_vis_batch_pt_num / sample_pts_per_ray;
   }
   auto render_colors = torch::cat(render_colors_vec, 0);
-  auto render_depths = torch::cat(render_depths_vec, 0);
+  auto render_dists = torch::cat(render_dists_vec, 0);
   auto render_accs = torch::cat(render_accs_vec, 0);
   auto render_scales = torch::cat(render_scale_vec, 0);
   auto render_num = torch::cat(render_num_vec, 0);
@@ -965,8 +960,17 @@ std::vector<torch::Tensor> NeuralSLAM::render_image(const torch::Tensor &_pose,
       _scale * data_loader_ptr->dataparser_ptr_->sensor_.camera.height;
   long scale_width =
       _scale * data_loader_ptr->dataparser_ptr_->sensor_.camera.width;
+
+  auto zdir_norm = sensor::get_image_coords_ndir(
+      _scale * data_loader_ptr->dataparser_ptr_->sensor_.camera.height,
+      _scale * data_loader_ptr->dataparser_ptr_->sensor_.camera.width,
+      data_loader_ptr->dataparser_ptr_->sensor_.camera.fx,
+      data_loader_ptr->dataparser_ptr_->sensor_.camera.fy,
+      _scale * data_loader_ptr->dataparser_ptr_->sensor_.camera.cx,
+      _scale * data_loader_ptr->dataparser_ptr_->sensor_.camera.cy,
+      render_colors.device())[1];
   return {render_colors.view({scale_height, scale_width, 3}),
-          render_depths.view({scale_height, scale_width, 1}),
+          render_dists.view({scale_height, scale_width, 1}) / zdir_norm,
           render_accs.view({scale_height, scale_width, 1}),
           render_scales.view({scale_height, scale_width, 1}),
           render_num.view({scale_height, scale_width, 1})};
@@ -992,6 +996,27 @@ void NeuralSLAM::create_dir(const std::filesystem::path &base_path,
   std::filesystem::create_directories(render_depth_path);
   acc_path = base_path / "acc";
   std::filesystem::create_directories(acc_path);
+}
+
+torch::Tensor depth_to_points(const sensor::Cameras &camera,
+                              const torch::Tensor &pose,
+                              const torch::Tensor &depth,
+                              const torch::Tensor &mask = torch::Tensor()) {
+  // [height width 3]
+  static auto zdir = sensor::get_image_coords_zdir(
+      camera.height, camera.width, camera.fx, camera.fy, camera.cx, camera.cy,
+      depth.device());
+  auto pos = pose.slice(1, 3, 4).squeeze().to(depth.device());
+  auto rot = pose.slice(1, 0, 3).to(depth.device());
+  if (mask.defined()) {
+    // [height*width 3]
+    auto dir_C2W = zdir.view({-1, 3}).index_select(0, mask).matmul(rot.t());
+    return dir_C2W * depth.view({-1, 1}).index_select(0, mask) + pos;
+  } else {
+    // [height width 3]
+    auto dir_C2W = zdir.matmul(rot.t());
+    return dir_C2W * depth + pos;
+  }
 }
 
 void NeuralSLAM::render_path(bool eval, const int &fps, const bool &save) {
@@ -1047,6 +1072,9 @@ void NeuralSLAM::render_path(bool eval, const int &fps, const bool &save) {
   static auto p_timer_render = llog::CreateTimer("    render_train_image");
   for (const auto &i : iter_bar) {
     if ((k_prefilter > 0) && k_llff && (i % 8 != 0)) {
+      continue;
+    }
+    if (i % 8 != 0) {
       continue;
     }
     p_timer_render->tic();
@@ -1126,6 +1154,33 @@ void NeuralSLAM::render_path(bool eval, const int &fps, const bool &save) {
           }
           cv::imwrite(test_render_depth_path / gt_color_file_name,
                       depth_colormap);
+
+          // export depth points
+          bool k_export_depth_points = true;
+          if (k_export_depth_points) {
+            auto render_depth_tensor = render_results[1];
+            auto depth_points = depth_to_points(
+                data_loader_ptr->dataparser_ptr_->sensor_.camera,
+                data_loader_ptr->dataparser_ptr_->get_pose(i, image_type)
+                    .slice(0, 0, 3),
+                render_depth_tensor);
+            std::filesystem::path depth_points_path =
+                test_render_depth_path.parent_path().parent_path() /
+                "depth_points";
+            if (!std::filesystem::exists(depth_points_path)) {
+              std::filesystem::create_directories(depth_points_path);
+            }
+            auto valid_depth_point_idx = ((render_depth_tensor > k_min_range) &
+                                          (render_depth_tensor < k_max_range))
+                                             .view({-1})
+                                             .nonzero()
+                                             .squeeze();
+            auto depth_points_file = (depth_points_path / gt_color_file_name)
+                                         .replace_extension(".ply");
+            ply_utils::export_to_ply(depth_points_file,
+                                     depth_points.view({-1, 3}).index_select(
+                                         0, valid_depth_point_idx));
+          }
         } else {
           if (!gt_depth.empty()) {
             cv::imwrite(train_gt_depth_path / gt_depth_file_name, gt_depth);
@@ -1198,6 +1253,80 @@ void NeuralSLAM::render_path(std::string pose_file, const int &fps) {
   }
   video_color.release();
   video_depth.release();
+}
+
+void NeuralSLAM::render_point(bool eval, const int &fps, const bool &save) {
+  torch::GradMode::set_enabled(false);
+  c10::cuda::CUDACachingAllocator::emptyCache();
+
+  std::filesystem::path train_color_path, train_depth_path, train_gt_color_path,
+      train_render_color_path, train_gt_depth_path, train_render_depth_path,
+      train_acc_path;
+
+  create_dir(k_output_path / "train", train_color_path, train_depth_path,
+             train_gt_color_path, train_render_color_path, train_gt_depth_path,
+             train_render_depth_path, train_acc_path);
+
+  auto train_origin =
+      data_loader_ptr->dataparser_ptr_->train_depth_pack_.origin.unsqueeze(1)
+          .repeat(
+              {1,
+               data_loader_ptr->dataparser_ptr_->train_depth_pack_.depth.size(
+                   1),
+               1})
+          .view({-1, 3});
+  auto train_direction =
+      data_loader_ptr->dataparser_ptr_->train_depth_pack_.direction.view(
+          {-1, 3});
+
+  auto train_point_num = train_direction.size(0);
+  float batch_size = k_batch_ray_num;
+  float sample_pts_per_ray = k_vis_batch_pt_num / batch_size;
+  std::vector<torch::Tensor> render_points_vec;
+  for (int i = 0; i < train_point_num;) {
+    int end = min(i + batch_size, train_point_num);
+    batch_size = end - i;
+
+    auto batch_ray_origin = train_origin.slice(0, i, end).to(k_device);
+    auto batch_ray_direction = train_direction.slice(0, i, end).to(k_device);
+    auto trace_results =
+        tracer::render_ray(local_map_ptr, batch_ray_origin, batch_ray_direction,
+                           0, k_trace_iter, false);
+
+    if (!trace_results.empty()) {
+      auto render_dist = trace_results[1].to(k_device);
+      auto valid_idx = (render_dist.view({-1}) > 0).nonzero().squeeze();
+      render_points_vec.emplace_back(
+          (batch_ray_origin + batch_ray_direction * trace_results[1])
+              .index_select(0, valid_idx)
+              .cpu());
+    }
+    i = end;
+    float c_pt_n = trace_results[3].size(0);
+    float tmp_sample_pts_per_ray = c_pt_n / (float)batch_size;
+    sample_pts_per_ray =
+        sample_pts_per_ray * 0.9f + tmp_sample_pts_per_ray * 0.1f;
+    batch_size = k_vis_batch_pt_num / sample_pts_per_ray;
+  }
+  auto render_points = torch::cat(render_points_vec, 0);
+
+  std::filesystem::path depth_points_path =
+      train_render_depth_path.parent_path().parent_path() / "render_points";
+  if (!std::filesystem::exists(depth_points_path)) {
+    std::filesystem::create_directories(depth_points_path);
+  }
+  auto depth_points_file = depth_points_path / "render_points.ply";
+  ply_utils::export_to_ply(depth_points_file, render_points);
+
+  depth_points_path =
+      train_render_depth_path.parent_path().parent_path() / "train_points";
+  if (!std::filesystem::exists(depth_points_path)) {
+    std::filesystem::create_directories(depth_points_path);
+  }
+  auto train_xyz =
+      data_loader_ptr->dataparser_ptr_->train_depth_pack_.xyz.view({-1, 3});
+  depth_points_file = depth_points_path / "train_points.ply";
+  ply_utils::export_to_ply(depth_points_file, train_xyz);
 }
 
 float NeuralSLAM::export_test_image(int idx, const std::string &prefix) {
@@ -1427,9 +1556,10 @@ void NeuralSLAM::keyboard_loop() {
     }
     case 'r': {
       c10::cuda::CUDACachingAllocator::emptyCache();
-      render_path(false, k_fps);
-      render_path(true, 2);
-      eval_render();
+      render_point(false, k_fps);
+      // render_path(false, k_fps);
+      // render_path(true, 2);
+      // eval_render();
       break;
     }
     case 'p': {

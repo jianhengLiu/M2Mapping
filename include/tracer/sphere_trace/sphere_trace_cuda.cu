@@ -39,6 +39,7 @@ __global__ void sphere_trace_cuda_kernel(
         float tmp_M = (R[tidx] - r[tidx]) / tmp_z;
         // clip M to [-1, 1]
         tmp_M = min(0.99f, max(-1.0f, tmp_M)); // never shrink it to [-1,0]
+        tmp_M = -1.0f;
         float step_relaxation = 0.8f;
         m[tidx] = step_relaxation * m[tidx] + (1.0f - step_relaxation) * tmp_M;
         M[tidx] = m[tidx];
@@ -50,16 +51,22 @@ __global__ void sphere_trace_cuda_kernel(
         z[tidx] = tmp_z;
       }
 
+      if ((r[tidx] <= surface_thr) && (R[tidx] <= surface_thr)) {
+        ray_state[tidx] = 2;
+        return;
+      }
+
       is[tidx] = IS[tidx];
       r[tidx] = R[tidx];
       t[tidx] = T[tidx];
-      if ((ray_state[tidx] == 2) && (trans[tidx] < 1e-3f)) {
+      if (ray_state[tidx] == 2) {
         ray_state[tidx] = 0;
         return;
       }
-      if (r[tidx] <= surface_thr) {
-        ray_state[tidx] = 2;
-      }
+      //   if ((ray_state[tidx] == 2) && (trans[tidx] < 1e-3f)) {
+      //     ray_state[tidx] = 0;
+      //     return;
+      //   }
     }
     float omega = 2.0f / (1.0f - m[tidx]);
     // avoid stuck in 0

@@ -167,7 +167,7 @@ render_from_pts(const LocalMap::Ptr &_local_map_ptr, torch::Tensor pts,
 std::vector<torch::Tensor>
 render_ray(const LocalMap::Ptr &_local_map_ptr, const torch::Tensor &ray_o,
            const torch::Tensor &ray_d, const int &render_type,
-           const int &iter_num, const bool training) {
+           const int &iter_num, const bool blending) {
   static auto timer_render_ray = llog::CreateTimer("       render_ray");
   timer_render_ray->tic();
 
@@ -189,39 +189,59 @@ render_ray(const LocalMap::Ptr &_local_map_ptr, const torch::Tensor &ray_o,
       render_num, pts, sdf, isigma, depth, delta, alpha, disp,
       render_weight_depth_delta;
 
-  auto sample_results = sphere_trace_adaptive_sampling(
-      _local_map_ptr, ray_o, ray_d, depth_io, ridx, iter_num,
-      k_sphere_trace_thr, training);
-  auto sample_ridx = sample_results[0];
-  depth = sample_results[1];
-  delta = sample_results[2];
-  auto slope = sample_results[3];
+  if (blending) {
+    auto sample_results =
+        sphere_trace_adaptive_sampling(_local_map_ptr, ray_o, ray_d, depth_io,
+                                       ridx, iter_num, k_sphere_trace_thr);
+    auto sample_ridx = sample_results[0];
+    depth = sample_results[1];
+    delta = sample_results[2];
+    auto slope = sample_results[3];
 
-  static auto timer_index_select = llog::CreateTimer("        index_select");
-  timer_index_select->tic();
-  auto sample_ray_d = ray_d.index_select(0, sample_ridx).view({-1, 3});
-  auto sample_ray_o = ray_o.index_select(0, sample_ridx).view({-1, 3});
-  timer_index_select->toc_sum();
-  auto sample_pts = torch::addcmul(sample_ray_o, sample_ray_d, depth);
+    static auto timer_index_select = llog::CreateTimer("        index_select");
+    timer_index_select->tic();
+    auto sample_ray_d = ray_d.index_select(0, sample_ridx).view({-1, 3});
+    auto sample_ray_o = ray_o.index_select(0, sample_ridx).view({-1, 3});
+    timer_index_select->toc_sum();
+    auto sample_pts = torch::addcmul(sample_ray_o, sample_ray_d, depth);
 
-  auto render_results =
-      render_from_pts(_local_map_ptr, sample_pts, sample_ray_d, sample_ridx,
-                      depth, delta, num_rays, render_type, slope);
-  if (render_type != 2) {
-    render_colors = render_results[0];
-    render_acc = render_results[5];
+    auto render_results =
+        render_from_pts(_local_map_ptr, sample_pts, sample_ray_d, sample_ridx,
+                        depth, delta, num_rays, render_type, slope);
+    if (render_type != 2) {
+      render_colors = render_results[0];
+      render_acc = render_results[5];
+    }
+    if (render_type != 1) {
+      render_depths = render_results[1];
+    }
+    render_scales = render_results[9];
+    render_num = render_results[10];
+    render_weight_depth_delta = render_results[11];
+    pts = render_results[2];
+    sdf = render_results[3];
+    isigma = render_results[4];
+    alpha = render_results[6];
+    depth = render_results[7];
+  } else {
+    // surface rendering
+    auto sample_results =
+        sphere_trace_adaptive(_local_map_ptr, ray_o, ray_d, depth_io, ridx,
+                              iter_num, k_sphere_trace_thr);
+    render_depths = sample_results[0];
+
+    pts = torch::addcmul(ray_o, ray_d, render_depths);
+    render_colors = _local_map_ptr->get_color(pts, ray_d)[0];
+    render_acc = torch::ones_like(render_depths);
+    render_scales = torch::ones_like(render_depths);
+    render_num = torch::ones_like(render_depths);
+    render_weight_depth_delta = torch::ones_like(render_depths);
+    auto sdf_reuslt = _local_map_ptr->get_sdf(pts);
+    sdf = sdf_reuslt[0];
+    isigma = sdf_reuslt[1];
+    alpha = torch::ones_like(sdf);
+    depth = render_depths;
   }
-  if (render_type != 1) {
-    render_depths = render_results[1];
-  }
-  render_scales = render_results[9];
-  render_num = render_results[10];
-  render_weight_depth_delta = render_results[11];
-  pts = render_results[2];
-  sdf = render_results[3];
-  isigma = render_results[4];
-  alpha = render_results[6];
-  depth = render_results[7];
 
   timer_render_ray->toc_sum();
   return {render_colors, render_depths, render_acc, pts,
@@ -232,7 +252,7 @@ render_ray(const LocalMap::Ptr &_local_map_ptr, const torch::Tensor &ray_o,
 std::vector<torch::Tensor> sphere_trace_adaptive_sampling(
     const LocalMap::Ptr &_local_map_ptr, torch::Tensor ray_o,
     torch::Tensor ray_d, const torch::Tensor &depth_io, torch::Tensor ridx,
-    const int &iter_num, const float &surface_thr, bool training) {
+    const int &iter_num, const float &surface_thr) {
   auto grad_mode = torch::GradMode::is_enabled();
   torch::GradMode::set_enabled(false);
 
@@ -340,6 +360,76 @@ std::vector<torch::Tensor> sphere_trace_adaptive_sampling(
 
   torch::GradMode::set_enabled(grad_mode);
   return {sample_ridx, sample_depths, sample_deltas, sample_slope};
+}
+
+std::vector<torch::Tensor>
+sphere_trace_adaptive(const LocalMap::Ptr &_local_map_ptr, torch::Tensor ray_o,
+                      torch::Tensor ray_d, const torch::Tensor &depth_io,
+                      torch::Tensor ridx, const int &iter_num,
+                      const float &surface_thr) {
+  auto grad_mode = torch::GradMode::is_enabled();
+  torch::GradMode::set_enabled(false);
+
+  // torch::Tensor z_near, z_far, mask_intersect;
+  // _local_map_ptr->get_intersect_point(ray_o, ray_d, z_near, z_far,
+  //                                     mask_intersect);
+  // auto st_depth = z_far.view({-1, 1});
+  auto st_depth = torch::zeros({ray_o.size(0), 1}, ray_o.options());
+  if (ridx.numel() > 0) {
+    auto first_hit = kaolin::mark_pack_boundaries_cuda(ridx);
+    auto start_idxes =
+        torch::nonzero(first_hit).view({-1}).to(torch::kInt).contiguous();
+    auto curr_idxes = start_idxes.clone().contiguous();
+
+    auto hit_ridx = ridx.index_select(0, curr_idxes);
+    auto hit_ray_d = ray_d.index_select(0, hit_ridx).contiguous().view({-1, 3});
+    auto hit_ray_o = ray_o.index_select(0, hit_ridx).contiguous().view({-1, 3});
+
+    // Automatic Step Size Relaxation in Sphere Tracing
+    // https://github.com/Bundas102/auto-relaxed-trace/blob/0de8d1040122f63edfd417479dc0cfb88e279d04/Shaders/trace.slang#L147
+    auto t = depth_io.slice(1, 0, 1)
+                 .index_select(0, curr_idxes)
+                 .contiguous()
+                 .view({-1, 1});
+    auto pts = torch::addcmul(hit_ray_o, hit_ray_d, t).contiguous();
+    auto sdf_results = _local_map_ptr->get_sdf(pts);
+    auto r = sdf_results[0].contiguous();
+    auto is = sdf_results[1].contiguous();
+    auto IS = is.contiguous();
+    auto m = -torch::ones_like(r).contiguous();
+    auto M = m.clone().contiguous();
+    auto z = r.clone().contiguous();
+    auto T = (t + z).contiguous();
+    auto trans = torch::ones_like(t).contiguous();
+
+    auto ray_state =
+        torch::ones_like(t.view({-1})).to(torch::kInt).contiguous();
+    int converge_num_thr = 0;
+    for (int i = 0; i < iter_num; i++) {
+      pts = torch::addcmul(hit_ray_o, hit_ray_d, T);
+      auto tmp_sdf_results = _local_map_ptr->get_sdf(pts);
+      auto R = tmp_sdf_results[0].contiguous();
+      IS = tmp_sdf_results[1].contiguous();
+
+      auto step_mask = sphere_trace::sphere_trace_cuda(
+          ray_state, r, is, trans, m, t, T, z, R, IS, M, surface_thr,
+          start_idxes, curr_idxes, depth_io);
+      ray_state = (R > surface_thr).view({-1}).to(torch::kInt).contiguous();
+      // ~(converge || beyond depth bound)
+      if (ray_state.sum().item<int>() <= converge_num_thr) {
+        break;
+      }
+    }
+    // to avoid cases not converge
+    auto valid_idx = (_local_map_ptr->get_valid_mask(pts) & (ray_state == 0))
+                         .nonzero()
+                         .squeeze();
+    st_depth.index_put_({hit_ridx.index_select(0, valid_idx)},
+                        t.index_select(0, valid_idx));
+  }
+
+  torch::GradMode::set_enabled(grad_mode);
+  return {st_depth};
 }
 
 } // namespace tracer

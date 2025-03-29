@@ -19,22 +19,22 @@ color_num_layer: 3
 # rim params
 trunc_sdf: 1
 surface_sample_num: 3
-free_sample_num: 3
+free_sample_num: 16
 color_batch_pt_num: 256000 # color render pt batch size
 
 lr: 5e-3
 lr_end: 1e-4
 
 sdf_weight: 1.0
-eikonal_weight: 1e-1 # it will greatly affect structure
-curvate_weight: 5e-4 # should be the same loss level to eikonal loss
+eikonal_weight: 0 #1e-1 # it will greatly affect structure
+curvate_weight: 0 #5e-4 # should be the same loss level to eikonal loss
 dist_weight: 1e-1
 
-rgb_weight: 10.0
+rgb_weight: 0 #10.0
 
 # visualization
 vis_frame_step: 10
 
 export_interval: 1000 # every export_interval frames, the test will be exported
 export_colmap_format: 0 # 0: disable; 1: for 3dgs; 2: for nerfstudio colmap
-export_train_pcl: 0 # 0: disable; 1: enable
+export_train_pcl: 1 # 0: disable; 1: enable

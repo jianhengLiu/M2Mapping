@@ -116,6 +116,7 @@ private:
 
   void render_path(bool eval, const int &fps = 30, const bool &save = true);
   void render_path(std::string pose_file, const int &fps = 30);
+  void render_point(bool eval, const int &fps = 30, const bool &save = true);
 
   float export_test_image(int idx = -1, const std::string &prefix = "");
   void export_checkpoint();

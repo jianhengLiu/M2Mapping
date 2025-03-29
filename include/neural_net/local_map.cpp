@@ -461,7 +461,11 @@ DepthSamples LocalMap::sample(const DepthSamples &_samples,
     samples.ray_sdf = samples.depth - depth_samples;
     samples.depth = depth_samples;
 
-    // sample points between sensor and first voxel
+    // Filter out the points that too behind surface.
+    auto front_idx = (samples.ray_sdf > 0).squeeze().nonzero().squeeze();
+    samples = samples.index_select(0, front_idx);
+
+    /* // sample points between sensor and first voxel
     auto first_hit = kaolin::mark_pack_boundaries_cuda(raymarch_results.ridx);
     auto start_idxes =
         torch::nonzero(first_hit).view({-1}).to(torch::kInt).contiguous();
@@ -476,38 +480,12 @@ DepthSamples LocalMap::sample(const DepthSamples &_samples,
     blind_samples.depth = blind_depth;
     blind_samples.xyz =
         blind_samples.origin + blind_samples.direction * blind_depth;
-    samples = samples.cat(blind_samples);
+    samples = samples.cat(blind_samples); */
 
-    // Filter out the points that too behind surface.
-    auto front_mask = samples.ray_sdf > 0;
-    samples = samples.index({front_mask.squeeze()});
+    auto free_samples = utils::sample_free_pts(_samples, k_free_sample_num);
+    samples = samples.cat(free_samples);
   } else {
-    // # Sample points along 1D line
-    // # depth ~ (NUM_RAYS, NUM_SAMPLES)
-    static float inv_sample_num = 1.0f / k_free_sample_num;
-    auto depth =
-        torch::linspace(0, 1.0 - inv_sample_num, k_free_sample_num,
-                        _samples.device())
-            .unsqueeze(0) +
-        (torch::rand({_samples.size(0), k_free_sample_num}, _samples.device()) *
-         inv_sample_num);
-
-    // //  non-linearly map depth to distribute more points near 1.0
-    // static float beta = 0.5f; // beta < 1 shifts samples towards 1
-    // depth = torch::pow(depth, beta);
-
-    // [N, K]
-    samples.ridx =
-        _samples.ridx.unsqueeze(1).repeat({1, k_free_sample_num}).view({-1});
-
-    samples.depth = _samples.depth * depth;
-    samples.ray_sdf = (_samples.depth - samples.depth).view({-1, 1});
-
-    samples.xyz =
-        (_samples.origin.view({-1, 1, 3}) +
-         _samples.direction.view({-1, 1, 3}) * samples.depth.unsqueeze(-1))
-            .view({-1, 3});
-    samples.depth = samples.depth.view({-1, 1});
+    samples = utils::sample_free_pts(_samples, k_free_sample_num);
   }
 
   return samples;

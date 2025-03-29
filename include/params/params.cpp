@@ -155,6 +155,9 @@ void read_params(const std::filesystem::path &_config_path,
   fsSettings["fill_level"] >> k_fill_level;
   fsSettings["leaf_sizes"] >> k_leaf_size;
   k_leaf_size_inv = 1.0f / k_leaf_size;
+  k_export_res =
+      k_export_res < 0.5f * k_leaf_size ? k_export_res : 0.5f * k_leaf_size;
+
   fsSettings["bce_sigma"] >> k_bce_sigma;
 
   k_bce_isigma = 1.0f / k_bce_sigma;
@@ -342,6 +345,7 @@ void read_base_params(const std::filesystem::path &_base_config_path) {
   k_rgb_weight_init = k_sdf_weight;
   k_rgb_weight = k_rgb_weight > 0 ? 1e-4f : 0.0f;
   k_rgb_weight_init = k_rgb_weight > 0 ? 1e-4f : 0.0f;
+  k_prob_map_en = k_rgb_weight > 0 ? k_prob_map_en : false;
   fsSettings["eikonal_weight"] >> k_eikonal_weight;
   fsSettings["curvate_weight"] >> k_curvate_weight;
   fsSettings["dist_weight"] >> k_dist_weight;
