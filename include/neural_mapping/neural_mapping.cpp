@@ -328,7 +328,7 @@ void NeuralSLAM::train_callback(const int &_iter,
   torch::NoGradGuard no_grad;
   if (_iter == -1) {
     k_t = 1.0f;
-    k_sample_std = 1e-3f;
+    k_sample_std = 1e-2f;
 
     int dir_feat_dim = k_dir_embedding_degree * k_dir_embedding_degree;
     local_map_ptr->dir_mask =
@@ -352,7 +352,7 @@ void NeuralSLAM::train_callback(const int &_iter,
   if (_point_samples.pred_isigma.numel() > 0) {
     k_sample_std = (1.0 / _point_samples.pred_isigma).mean().item<float>();
     llog::RecordValue("sstd", k_sample_std);
-    k_sample_std = max(k_sample_std, 1e-3f);
+    k_sample_std = max(k_sample_std, 1e-2f);
   }
 
   if (k_outlier_remove && (_iter > 0)) {
@@ -1703,6 +1703,7 @@ bool NeuralSLAM::end() {
   if (k_sdf_weight > 0) {
     // clear VRAM
     c10::cuda::CUDACachingAllocator::emptyCache();
+    render_point(false, k_fps);
     save_mesh(k_cull_mesh);
     eval_mesh();
   }

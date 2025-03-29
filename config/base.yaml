@@ -26,7 +26,7 @@ lr: 5e-3
 lr_end: 1e-4
 
 sdf_weight: 1.0
-eikonal_weight: 0 #1e-1 # it will greatly affect structure
+eikonal_weight: 1e-1 # it will greatly affect structure
 curvate_weight: 0 #5e-4 # should be the same loss level to eikonal loss
 dist_weight: 1e-1
 
