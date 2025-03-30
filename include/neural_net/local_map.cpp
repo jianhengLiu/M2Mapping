@@ -234,6 +234,7 @@ void LocalMap::meshing_(ros::Publisher &mesh_pub,
 
   int count = 0;
   for (int i = 0; i < steps; ++i) {
+    std::cout << "\rstep: " << i << " / " << steps;
     float start = i * step_size + x_min;
     float end = start + step_size;
     if (i == steps - 1) {
@@ -273,18 +274,19 @@ void LocalMap::meshing_(ros::Publisher &mesh_pub,
     auto vertices_cu = mc_results[0];
     auto faces_cu = mc_results[1];
 
-    if (faces_cu.numel() == 0)
-      continue;
+    // if (faces_cu.numel() == 0)
+    //   continue;
 
-    // filter boundary artifacts
-    auto qpts = (vertices_cu / _res).floor().to(torch::kInt16);
-    auto qpts_neighbor = spc_ops::points_to_neighbors(qpts).view({-1, 3});
-    auto vertices_neighbor = qpts_neighbor.to(torch::kFloat32) * _res;
-    auto valid_mask = get_valid_mask(vertices_neighbor).view({-1, 27}).all(1);
+    // // filter boundary artifacts
+    // auto qpts = (vertices_cu / _res).floor().to(torch::kInt16);
+    // auto qpts_neighbor = spc_ops::points_to_neighbors(qpts).view({-1, 3});
+    // auto vertices_neighbor = qpts_neighbor.to(torch::kFloat32) * _res;
+    // auto valid_mask = get_valid_mask(vertices_neighbor).view({-1,
+    // 27}).all(1);
 
-    valid_mask = valid_mask.index({faces_cu.view(-1)}).view({-1, 3}).all(-1);
-    auto valid_idx = torch::nonzero(valid_mask).view({-1});
-    faces_cu = faces_cu.index_select(0, valid_idx);
+    // valid_mask = valid_mask.index({faces_cu.view(-1)}).view({-1, 3}).all(-1);
+    // auto valid_idx = torch::nonzero(valid_mask).view({-1});
+    // faces_cu = faces_cu.index_select(0, valid_idx);
     if (faces_cu.numel() == 0 || vertices_cu.numel() == 0)
       continue;
 
@@ -390,18 +392,19 @@ void LocalMap::meshing_(float _res, bool _save) {
     auto vertices_cu = mc_results[0];
     auto faces_cu = mc_results[1];
 
-    if (faces_cu.numel() == 0)
-      continue;
+    // if (faces_cu.numel() == 0)
+    //   continue;
 
-    // filter boundary artifacts
-    auto qpts = (vertices_cu / _res).floor().to(torch::kInt16);
-    auto qpts_neighbor = spc_ops::points_to_neighbors(qpts).view({-1, 3});
-    auto vertices_neighbor = qpts_neighbor.to(torch::kFloat32) * _res;
-    auto valid_mask = get_valid_mask(vertices_neighbor).view({-1, 27}).all(1);
+    // // filter boundary artifacts
+    // auto qpts = (vertices_cu / _res).floor().to(torch::kInt16);
+    // auto qpts_neighbor = spc_ops::points_to_neighbors(qpts).view({-1, 3});
+    // auto vertices_neighbor = qpts_neighbor.to(torch::kFloat32) * _res;
+    // auto valid_mask = get_valid_mask(vertices_neighbor).view({-1,
+    // 27}).all(1);
 
-    valid_mask = valid_mask.index({faces_cu.view(-1)}).view({-1, 3}).all(-1);
-    auto valid_idx = torch::nonzero(valid_mask).view({-1});
-    faces_cu = faces_cu.index_select(0, valid_idx);
+    // valid_mask = valid_mask.index({faces_cu.view(-1)}).view({-1, 3}).all(-1);
+    // auto valid_idx = torch::nonzero(valid_mask).view({-1});
+    // faces_cu = faces_cu.index_select(0, valid_idx);
     if (faces_cu.numel() == 0 || vertices_cu.numel() == 0)
       continue;
 
