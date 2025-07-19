@@ -106,7 +106,7 @@ add_library(mesher include/utils/utils.cpp include/mesher/mesher.cpp)
 target_link_libraries(mesher ply_utils cumcubes)
 
 add_library(data_parser include/data_loader/data_parsers/base_parser.cpp)
-target_link_libraries(data_parser ${TORCH_LIBRARIES} ply_utils)
+target_link_libraries(data_parser ${OpenCV_LIBS} ${TORCH_LIBRARIES} ply_utils)
 
 add_library(ray_utils include/utils/ray_utils/ray_utils.cpp)
 target_link_libraries(ray_utils ${TORCH_LIBRARIES})
