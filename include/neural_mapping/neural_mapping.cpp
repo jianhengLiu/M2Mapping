@@ -1456,6 +1456,7 @@ void NeuralSLAM::export_checkpoint() {
     auto save_path = k_output_path / ("local_map_checkpoint.pt");
     torch::save(local_map_ptr, save_path);
     write_pt_params();
+    std::cout << "Saved checkpoint to: " << save_path << "\n";
   }
 }
 
