@@ -295,7 +295,7 @@ void LocalMap::meshing_(ros::Publisher &mesh_pub,
     torch::Tensor color_cu;
     switch (k_vis_attribute) {
     case 1:
-      color_cu = ply_utils::cal_face_normal_color(normal_cu);
+      color_cu = normal_cu / 2.0 + 0.5;
       break;
     case 2:
       color_cu = get_color(vertices_cu, -normal_cu)[0];
@@ -412,7 +412,7 @@ void LocalMap::meshing_(float _res, bool _save) {
     torch::Tensor color_cu;
     switch (k_vis_attribute) {
     case 1:
-      color_cu = ply_utils::cal_face_normal_color(normal_cu);
+      color_cu = normal_cu / 2.0 + 0.5;
       break;
     case 2:
       color_cu = get_color(vertices_cu, -normal_cu)[0];
